@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SimulationSession {
+  id        String            @id @default(cuid())
+  mode      String            // "traditional" | "managed" | "managed-ai"
+  startedAt DateTime          @default(now())
+  endedAt   DateTime?
+  crossings VehicleCrossing[]
+  violations IntersectionViolation[]
+}
+
+model VehicleCrossing {
+  id          String            @id @default(cuid())
+  sessionId   String
+  session     SimulationSession @relation(fields: [sessionId], references: [id])
+  direction   String            // N, S, E, W
+  waitSeconds Float
+  crossedAt   DateTime          @default(now())
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  message   String
+  createdAt DateTime @default(now())
+}
+
+model IntersectionViolation {
+  id         String            @id @default(cuid())
+  sessionId  String
+  session    SimulationSession @relation(fields: [sessionId], references: [id])
+  vehicleId  String
+  occurredAt DateTime          @default(now())
+}

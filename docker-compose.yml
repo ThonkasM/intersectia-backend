@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: intersectia-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: intersectia
+      POSTGRES_PASSWORD: intersectia
+      POSTGRES_DB: intersectia
+    ports:
+      - "5434:5432"
+    volumes:
+      - intersectia_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intersectia -d intersectia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  intersectia_pgdata:
