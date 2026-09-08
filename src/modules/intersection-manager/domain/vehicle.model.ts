@@ -59,6 +59,10 @@ export class Vehicle {
   waitedSeconds: number = 0;
   isPlayerControlled: boolean = false;
   laneChangeCooldown: number = 0;
+  frozen: boolean = false;
+  crashed: boolean = false;
+  crashTimer: number = 0;
+  crashCooldown: number = 0;
 
   constructor(id: string, from: Direction, x: number, z: number, lane = 0) {
     this.id = id;

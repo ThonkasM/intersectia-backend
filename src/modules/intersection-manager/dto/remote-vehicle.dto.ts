@@ -4,4 +4,6 @@ export class RemoteVehicleDto {
   z: number;
   from: 'N' | 'S' | 'E' | 'W';
   state: 'approach' | 'queued' | 'crossing' | 'gone';
+  frozen: boolean;
+  crashed: boolean;
 }

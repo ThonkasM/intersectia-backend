@@ -14,15 +14,18 @@ import {
 } from './domain/vehicle.model';
 import {
   APPROACH_SPEED,
+  CROSSING_BRAKE,
   CROSSING_SPEED,
   GONE_DISTANCE,
   INTERSECTION_HALF,
   MIN_FOLLOW_DISTANCE,
   SPAWN_DISTANCE,
   STOP_LINE_DISTANCE,
+  applyBrake,
   computeSeparationSpeed,
   distanceToIntersection,
   progress,
+  vehiclesOverlap,
 } from './domain/intersection-state';
 import {
   PLAYER_MAX_SPEED,
@@ -40,7 +43,9 @@ import { PlayerStateDto } from './dto/player-state.dto';
 const TICK_DT = 0.05;
 const MAX_VEHICLES = 14;
 const LANE_CHANGE_COOLDOWN = 1.5;
-const OVERTAKE_CLEARANCE = 14;
+const OVERTAKE_CLEARANCE = 7;
+const CRASH_DURATION = 2.0;
+const CRASH_COOLDOWN = 1.5;
 const DIRECTIONS: Array<Vehicle['from']> = ['N', 'S', 'E', 'W'];
 
 @Injectable()
@@ -53,6 +58,7 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
   private nextId = 0;
   private interval?: ReturnType<typeof setInterval>;
   private readonly playerLastSeen = new Map<string, number>();
+  private collisionsEnabled = false;
 
   constructor(
     @Inject(forwardRef(() => IntersectionManagerGateway))
@@ -104,6 +110,7 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
     this.handlePlayerVehicles();
     this.maybeSpawn();
     this.moveVehicles();
+    this.detectCollisions();
     await this.decideAndRelease();
     this.cleanupFinished();
     this.gateway.broadcast(this.toSnapshot());
@@ -144,17 +151,58 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
   }
 
   private moveVehicles(): void {
+    // Decaimiento del estado de colisión: al terminar el timer, el vehículo se
+    // recupera y entra en un corto cooldown para poder apartarse.
     for (const v of this.vehicles) {
-      if (v.isPlayerControlled || v.state === 'queued' || v.state === 'gone') {
+      if (v.crashTimer > 0) {
+        v.crashTimer -= TICK_DT;
+        if (v.crashTimer <= 0) {
+          v.crashed = false;
+          v.crashCooldown = CRASH_COOLDOWN;
+        }
+      } else if (v.crashCooldown > 0) {
+        v.crashCooldown -= TICK_DT;
+      }
+    }
+
+    // Si el jugador está cruzando la intersección, los autónomos que cruzan en
+    // direcciones en conflicto le ceden el paso (frenan y se detienen).
+    const player = this.playerVehicle();
+    const yieldToPlayer = player?.state === 'crossing';
+    for (const v of this.vehicles) {
+      if (
+        v.isPlayerControlled ||
+        v.frozen ||
+        v.crashed ||
+        v.state === 'queued' ||
+        v.state === 'gone'
+      ) {
         continue;
       }
-      if (v.speed <= 0) {
-        v.speed = v.state === 'crossing' ? CROSSING_SPEED : APPROACH_SPEED;
+      // Aceleración suave hacia la velocidad de crucero. Al ceder el paso al
+      // jugador, un autónomo que ya frenó en la intersección permanece detenido.
+      const cruise = v.state === 'crossing' ? CROSSING_SPEED : APPROACH_SPEED;
+      if (v.speed < cruise && !(yieldToPlayer && v.state === 'crossing')) {
+        v.speed = Math.min(cruise, v.speed + CROSSING_BRAKE * TICK_DT);
       }
     }
     for (const v of this.vehicles) {
-      if (v.isPlayerControlled || v.state === 'queued' || v.state === 'gone') {
+      if (
+        v.isPlayerControlled ||
+        v.frozen ||
+        v.crashed ||
+        v.state === 'queued' ||
+        v.state === 'gone'
+      ) {
         continue;
+      }
+      if (
+        yieldToPlayer &&
+        player &&
+        v.state === 'crossing' &&
+        this.conflicts(v, player)
+      ) {
+        v.speed = applyBrake(v.speed, TICK_DT);
       }
       const ahead = this.findAhead(v);
       if (ahead) {
@@ -185,6 +233,7 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
         }
         continue;
       }
+      if (v.frozen || v.crashed) continue;
       if (
         v.state === 'approach' &&
         distanceToIntersection(v) <= STOP_LINE_DISTANCE
@@ -200,11 +249,48 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
       }
     }
     for (const v of this.vehicles) {
-      if (v.isPlayerControlled) continue;
+      if (v.isPlayerControlled || v.frozen || v.crashed) {
+        continue;
+      }
       if (v.state === 'queued' || v.state === 'crossing') {
         v.waitedSeconds += TICK_DT;
       }
     }
+  }
+
+  private detectCollisions(): void {
+    if (!this.collisionsEnabled) return;
+    const active = this.vehicles.filter((v) => v.state !== 'gone');
+    for (let i = 0; i < active.length; i += 1) {
+      for (let j = i + 1; j < active.length; j += 1) {
+        const a = active[i];
+        const b = active[j];
+        if (a.crashed || b.crashed) continue;
+        if (a.crashCooldown > 0 || b.crashCooldown > 0) continue;
+        if (vehiclesOverlap(a, b)) {
+          this.crashVehicle(a);
+          this.crashVehicle(b);
+        }
+      }
+    }
+  }
+
+  private crashVehicle(v: Vehicle): void {
+    v.crashed = true;
+    v.crashTimer = CRASH_DURATION;
+    v.speed = 0;
+  }
+
+  setCollisions(enabled: boolean): void {
+    this.collisionsEnabled = enabled;
+    if (!enabled) {
+      for (const v of this.vehicles) {
+        v.crashed = false;
+        v.crashTimer = 0;
+        v.crashCooldown = 0;
+      }
+    }
+    this.logger.log(`Collisions ${enabled ? 'enabled' : 'disabled'}`);
   }
 
   private findAhead(v: Vehicle): Vehicle | null {
@@ -242,8 +328,11 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
       if (Math.abs(this.lateralOf(other) - targetLateral) >= LANE_WIDTH)
         continue;
       const otherProgress = progress(other);
-      const diff = Math.abs(otherProgress - myProgress);
-      if (diff < OVERTAKE_CLEARANCE) {
+      // Solo importa lo que hay DELANTE en el carril objetivo (lo de detrás
+      // simplemente nos seguirá). Antes usaba Math.abs y un vehículo detrás
+      // bloqueaba el rebase, dejando al autónomo trabado.
+      if (otherProgress <= myProgress) continue;
+      if (otherProgress - myProgress < OVERTAKE_CLEARANCE) {
         return false;
       }
     }
@@ -299,9 +388,11 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
   }
 
   private playerInsideIntersection(): boolean {
-    return this.vehicles.some(
-      (v) => v.isPlayerControlled && v.state === 'crossing',
-    );
+    return this.playerVehicle()?.state === 'crossing';
+  }
+
+  private playerVehicle(): Vehicle | null {
+    return this.vehicles.find((v) => v.isPlayerControlled) ?? null;
   }
 
   private currentEngineName(): 'fifo' | 'right-priority' | 'ai' {
@@ -340,7 +431,28 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
       z: Math.round(v.z * 1000) / 1000,
       from: v.from,
       state: v.state,
+      frozen: v.frozen,
+      crashed: v.crashed,
     }));
+  }
+
+  setFrozen(id: string, frozen: boolean): void {
+    const vehicle = this.vehicles.find((v) => v.id === id);
+    if (!vehicle || vehicle.isPlayerControlled) return;
+    vehicle.frozen = frozen;
+    if (frozen) vehicle.speed = 0;
+    this.logger.log(`Vehicle ${id} ${frozen ? 'frozen' : 'resumed'}`);
+  }
+
+  reset(): void {
+    this.vehicles.length = 0;
+    this.queue.length = 0;
+    this.occupants = [];
+    this.spawnCountdown = 1.5;
+    this.nextId = 0;
+    this.playerLastSeen.clear();
+    this.logger.log('Simulation reset');
+    void this.startSession();
   }
 
   upsertPlayerVehicle(state: PlayerStateDto): void {
@@ -349,6 +461,9 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
       existing.setPosition(state.x, state.z);
       existing.lane = laneFromPosition(state.from, state.x, state.z);
       existing.speed = Math.min(Math.max(state.speed, 0), PLAYER_MAX_SPEED);
+      // Reutilizar el vehículo 'player' (p.ej. tras un cambio de modo/handover):
+      // vuelve a ser controlado por el jugador.
+      existing.isPlayerControlled = true;
       this.playerLastSeen.set(state.id, Date.now());
       return;
     }

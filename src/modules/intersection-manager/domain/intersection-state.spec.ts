@@ -2,6 +2,7 @@ import { Vehicle } from './vehicle.model';
 import {
   MIN_FOLLOW_DISTANCE,
   MIN_STOP_DISTANCE,
+  applyBrake,
   computeSeparationSpeed,
   progress,
 } from './intersection-state';
@@ -35,7 +36,7 @@ describe('computeSeparationSpeed', () => {
   it('matches the ahead speed when within MIN_FOLLOW_DISTANCE', () => {
     const v = new Vehicle('v', 'N', 3.375, 20);
     v.speed = 6;
-    const ahead = new Vehicle('ahead', 'N', 3.375, 17);
+    const ahead = new Vehicle('ahead', 'N', 3.375, 16);
     ahead.speed = 3;
     const gap = progress(ahead) - progress(v);
     expect(gap).toBeGreaterThanOrEqual(MIN_STOP_DISTANCE);
@@ -48,5 +49,12 @@ describe('computeSeparationSpeed', () => {
     v.speed = 6;
     const ahead = new Vehicle('ahead', 'N', 3.375, 10);
     expect(computeSeparationSpeed(v, ahead)).toBe(6);
+  });
+});
+
+describe('applyBrake', () => {
+  it('reduces speed but never below zero', () => {
+    expect(applyBrake(9, 0.05)).toBeCloseTo(9 - 20 * 0.05);
+    expect(applyBrake(0.1, 0.05)).toBe(0);
   });
 });

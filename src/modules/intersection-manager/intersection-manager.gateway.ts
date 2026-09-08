@@ -49,4 +49,24 @@ export class IntersectionManagerGateway {
   handlePlayerState(@MessageBody() body: PlayerStateDto): void {
     this.simulationLoop.upsertPlayerVehicle(body);
   }
+
+  @SubscribeMessage('freezeVehicle')
+  handleFreezeVehicle(@MessageBody() body: { id: string }): void {
+    this.simulationLoop.setFrozen(body.id, true);
+  }
+
+  @SubscribeMessage('resumeVehicle')
+  handleResumeVehicle(@MessageBody() body: { id: string }): void {
+    this.simulationLoop.setFrozen(body.id, false);
+  }
+
+  @SubscribeMessage('reset')
+  handleReset(): void {
+    this.simulationLoop.reset();
+  }
+
+  @SubscribeMessage('setCollisions')
+  handleSetCollisions(@MessageBody() body: { enabled: boolean }): void {
+    this.simulationLoop.setCollisions(body.enabled === true);
+  }
 }
