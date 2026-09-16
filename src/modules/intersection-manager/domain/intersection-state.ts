@@ -4,6 +4,7 @@ export const SPAWN_DISTANCE = 90;
 export const STOP_LINE_DISTANCE = 10;
 export const INTERSECTION_HALF = 6;
 export const GONE_DISTANCE = 12;
+export const EXIT_DISTANCE = 80;
 export const APPROACH_SPEED = 6;
 export const CROSSING_SPEED = 9;
 export const MIN_FOLLOW_DISTANCE = 6.0;

@@ -16,6 +16,7 @@ import {
   APPROACH_SPEED,
   CROSSING_BRAKE,
   CROSSING_SPEED,
+  EXIT_DISTANCE,
   GONE_DISTANCE,
   INTERSECTION_HALF,
   MIN_FOLLOW_DISTANCE,
@@ -245,6 +246,13 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
         v.state === 'crossing' &&
         distanceToIntersection(v) > GONE_DISTANCE
       ) {
+        // Ya despejó la intersección: sigue avanzando con estado "éxito" hasta
+        // perderse en el horizonte, en vez de desaparecer de golpe.
+        v.state = 'success';
+      } else if (
+        v.state === 'success' &&
+        distanceToIntersection(v) > EXIT_DISTANCE
+      ) {
         v.state = 'gone';
       }
     }
@@ -340,7 +348,10 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async decideAndRelease(): Promise<void> {
-    this.occupants = this.occupants.filter((o) => o.state !== 'gone');
+    // Un vehículo en "success" ya despejó la intersección: libera la plaza.
+    this.occupants = this.occupants.filter(
+      (o) => o.state !== 'gone' && o.state !== 'success',
+    );
     if (this.playerInsideIntersection()) return;
     if (this.queue.length === 0) return;
 

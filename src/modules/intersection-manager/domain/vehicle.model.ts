@@ -1,5 +1,5 @@
 export type Direction = 'N' | 'S' | 'E' | 'W';
-export type VehicleState = 'approach' | 'queued' | 'crossing' | 'gone';
+export type VehicleState = 'approach' | 'queued' | 'crossing' | 'success' | 'gone';
 
 // Dos carriles por sentido. Índice 0 = carril exterior (derecho), 1 = interior (sobrepaso).
 // Para N/S el desvío es en x; para E/W es en z.
