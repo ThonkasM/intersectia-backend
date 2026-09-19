@@ -12,7 +12,6 @@ import {
   EXIT_DISTANCE,
   GONE_DISTANCE,
   INTERSECTION_HALF,
-  MIN_FOLLOW_DISTANCE,
   SPAWN_DISTANCE,
   STOP_LINE_DISTANCE,
   applyBrake,
@@ -26,6 +25,14 @@ import {
   isPlayerTimedOut,
   shouldFlagViolation,
 } from './player-vehicle.rules';
+import {
+  directionsConflict,
+  exitBlockedBy,
+  occupantHasCleared,
+  shouldChangeLaneForQueue,
+  STOPPED_SPEED,
+  withinIntersection,
+} from './decision-rules';
 import {
   DecisionEngine,
   DecisionEngineName,
@@ -57,6 +64,7 @@ export interface SessionSimulationDeps {
   emitState: (vehicles: RemoteVehicleDto[]) => void;
   emitDecision: (event: DecisionEvent) => void;
   logger: Logger;
+  random?: () => number;
 }
 
 export class SessionSimulation {
@@ -71,8 +79,11 @@ export class SessionSimulation {
   private dbSessionId: string | null = null;
   private readonly playerLastSeen = new Map<string, number>();
   private collisionsEnabled = false;
+  private readonly random: () => number;
 
-  constructor(private readonly deps: SessionSimulationDeps) {}
+  constructor(private readonly deps: SessionSimulationDeps) {
+    this.random = deps.random ?? Math.random;
+  }
 
   get sessionId(): string {
     return this.deps.sessionId;
@@ -172,8 +183,8 @@ export class SessionSimulation {
     this.spawnCountdown -= TICK_DT;
     if (this.spawnCountdown > 0) return;
     if (this.vehicles.length < MAX_VEHICLES) {
-      const from = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
-      const lane = Math.random() < 0.5 ? 0 : 1;
+      const from = DIRECTIONS[Math.floor(this.random() * DIRECTIONS.length)];
+      const lane = this.random() < 0.5 ? 0 : 1;
       const { dx, dz } = Vehicle.DIRECTION[from];
       const off = laneOffset(from, lane);
       const vehicle = new Vehicle(
@@ -185,7 +196,7 @@ export class SessionSimulation {
       );
       this.vehicles.push(vehicle);
     }
-    this.spawnCountdown = 1 + Math.random() * 1.5;
+    this.spawnCountdown = 1 + this.random() * 1.5;
   }
 
   private moveVehicles(): void {
@@ -241,9 +252,12 @@ export class SessionSimulation {
         v.speed = computeSeparationSpeed(v, ahead);
         const gap = progress(ahead) - progress(v);
         if (
-          gap < MIN_FOLLOW_DISTANCE &&
-          v.laneChangeCooldown <= 0 &&
-          this.canOvertake(v)
+          shouldChangeLaneForQueue(
+            gap,
+            ahead.speed < STOPPED_SPEED,
+            v.laneChangeCooldown,
+            this.canOvertake(v),
+          )
         ) {
           v.lane = 1 - v.lane;
           v.laneChangeCooldown = LANE_CHANGE_COOLDOWN;
@@ -406,9 +420,8 @@ export class SessionSimulation {
 
   private async decideAndRelease(): Promise<void> {
     this.occupants = this.occupants.filter(
-      (o) => o.state !== 'gone' && o.state !== 'success',
+      (o) => !occupantHasCleared(progress(o)),
     );
-    if (this.playerInsideIntersection()) return;
     const eligible = this.queue.filter(
       (v) => !v.frozen && v.state !== 'crossing',
     );
@@ -417,15 +430,34 @@ export class SessionSimulation {
     const occupant = this.occupants[0] ?? null;
     const id = await this.getEngine().decideNextCrossing(eligible, occupant);
     const primary = id ? eligible.find((v) => v.id === id) : undefined;
-    if (primary && !this.conflictsWithOccupants(primary)) {
-      this.grantCrossing(primary);
-    }
+    if (primary && this.canGrant(primary)) this.grantCrossing(primary);
 
     for (const vehicle of [...this.queue]) {
       if (vehicle.frozen || vehicle.state === 'crossing') continue;
-      if (this.conflictsWithOccupants(vehicle)) continue;
+      if (!this.canGrant(vehicle)) continue;
       this.grantCrossing(vehicle);
     }
+  }
+
+  // Un cruce solo se concede si el carril de salida esta libre y no se
+  // conflictua con el ocupante ni con el jugador dentro de la interseccion.
+  private canGrant(vehicle: Vehicle): boolean {
+    if (this.conflictsWithOccupants(vehicle)) return false;
+    if (this.playerBlocks(vehicle)) return false;
+    if (this.exitBlocked(vehicle)) return false;
+    return true;
+  }
+
+  private playerBlocks(vehicle: Vehicle): boolean {
+    const player = this.playerVehicle();
+    if (!player || !withinIntersection(progress(player))) return false;
+    return this.conflicts(vehicle, player);
+  }
+
+  private exitBlocked(vehicle: Vehicle): boolean {
+    const ahead = this.findAhead(vehicle);
+    if (!ahead) return false;
+    return exitBlockedBy(progress(ahead), progress(vehicle), ahead.speed);
   }
 
   private grantCrossing(vehicle: Vehicle): void {
@@ -449,18 +481,7 @@ export class SessionSimulation {
   }
 
   private conflicts(a: Vehicle, b: Vehicle): boolean {
-    if (a.from === b.from) return false;
-    const opposite: Record<Vehicle['from'], Vehicle['from']> = {
-      N: 'S',
-      S: 'N',
-      E: 'W',
-      W: 'E',
-    };
-    return opposite[a.from] !== b.from;
-  }
-
-  private playerInsideIntersection(): boolean {
-    return this.playerVehicle()?.state === 'crossing';
+    return directionsConflict(a.from, b.from);
   }
 
   private playerVehicle(): Vehicle | null {

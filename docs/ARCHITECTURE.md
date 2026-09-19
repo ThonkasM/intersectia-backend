@@ -31,6 +31,23 @@ Se seleccionan según `SimMode` (`traditional` → derecha, `managed-ai` → IA,
 
 socket.io con **salas por sesión**. Eventos servidor→cliente: `state` (20 Hz) y `decision`. Cliente→servidor: `setMode`, `playerState`, `freezeVehicle`, `resumeVehicle`, `reset`, `setCollisions`. Todos los payloads se validan con `ValidationPipe` y DTOs con `class-validator`.
 
+## Reglas del nodo, carriles y jugador
+
+Reglas puras en `domain/decision-rules.ts` (con tests propios):
+
+- **El ocupante se libera apenas cruza**: una dirección en conflicto deja de esperar
+  cuando el vehículo que cruza supera el centro + margen (`occupantHasCleared`), no cuando
+  desaparece en el horizonte. Menos espera innecesaria.
+- **Sin spillback (no bloquear la caja)**: a un vehículo no se le concede el cruce si tiene
+  un vehículo detenido por delante dentro del tramo de salida (`exitBlockedBy`): espera en la
+  línea de parada en vez de quedar atravesado bloqueando la intersección.
+- **Uso de carriles**: si el carril propio está detenido, el vehículo inicia el cambio de
+  carril antes (`shouldChangeLaneForQueue`), usando el carril vecino libre para no quedar
+  atrapado detrás de una cola o de un vehículo lento.
+- **Reacción al jugador**: el jugador **ya no congela toda la intersección**. Si está dentro,
+  solo ceden las direcciones que conflictúan con él; las opuestas/sin conflicto siguen
+  cruzando. Los autónomos además lo esquivan por el carril libre y ceden el paso al cruzarse.
+
 ## Persistencia
 
 Modelos Prisma: `SimulationSession`, `VehicleCrossing`, `IntersectionViolation`, `ContactMessage`. Las escrituras (cruces, violaciones) son asíncronas y no bloquean el tick. Al cerrar una sesión se escribe `endedAt`.
