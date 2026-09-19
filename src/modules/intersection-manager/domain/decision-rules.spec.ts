@@ -3,6 +3,7 @@ import {
   EXIT_CLEARANCE,
   exitBlockedBy,
   isStarving,
+  movementConflicts,
   occupantHasCleared,
   OCCUPANT_CLEAR_DISTANCE,
   shouldChangeLaneForQueue,
@@ -21,6 +22,22 @@ describe('decision-rules', () => {
   it('conflicts with perpendicular directions', () => {
     expect(directionsConflict('N', 'E')).toBe(true);
     expect(directionsConflict('S', 'W')).toBe(true);
+  });
+
+  it('does not conflict for same-direction or straight/right-opposite traffic', () => {
+    expect(movementConflicts('N', 'straight', 'N', 'left')).toBe(false);
+    expect(movementConflicts('N', 'straight', 'S', 'straight')).toBe(false);
+    expect(movementConflicts('N', 'straight', 'S', 'right')).toBe(false);
+    expect(movementConflicts('N', 'right', 'S', 'right')).toBe(false);
+  });
+
+  it('conflicts when an opposite movement turns left', () => {
+    expect(movementConflicts('N', 'left', 'S', 'straight')).toBe(true);
+    expect(movementConflicts('N', 'straight', 'S', 'left')).toBe(true);
+  });
+
+  it('conflicts between perpendicular movements', () => {
+    expect(movementConflicts('N', 'right', 'E', 'straight')).toBe(true);
   });
 
   it('bounds the intersection window around the center', () => {

@@ -1,5 +1,8 @@
+import type { TurnPath } from './turn-path';
+
 export type Direction = 'N' | 'S' | 'E' | 'W';
 export type VehicleState = 'approach' | 'queued' | 'crossing' | 'success' | 'gone';
+export type Turn = 'straight' | 'right' | 'left';
 
 // Dos carriles por sentido. Índice 0 = carril exterior (derecho), 1 = interior (sobrepaso).
 // Para N/S el desvío es en x; para E/W es en z.
@@ -65,6 +68,10 @@ export class Vehicle {
   crashCooldown: number = 0;
   authorized: boolean = false;
   violationFlagged: boolean = false;
+  turn: Turn = 'straight';
+  exitFrom: Direction;
+  path: TurnPath | null = null;
+  pathT: number = 0;
 
   constructor(id: string, from: Direction, x: number, z: number, lane = 0) {
     this.id = id;
@@ -72,6 +79,7 @@ export class Vehicle {
     this.x = x;
     this.z = z;
     this.lane = lane;
+    this.exitFrom = from;
   }
 
   setPosition(x: number, z: number): void {

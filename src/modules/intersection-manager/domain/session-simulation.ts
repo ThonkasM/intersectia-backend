@@ -4,6 +4,7 @@ import {
   laneFromPosition,
   laneOffset,
   Vehicle,
+  type Turn,
 } from './vehicle.model';
 import {
   APPROACH_SPEED,
@@ -26,14 +27,20 @@ import {
   shouldFlagViolation,
 } from './player-vehicle.rules';
 import {
-  directionsConflict,
   exitBlockedBy,
   isStarving,
+  movementConflicts,
   occupantHasCleared,
   shouldChangeLaneForQueue,
   STOPPED_SPEED,
   withinIntersection,
 } from './decision-rules';
+import {
+  buildTurnPath,
+  exitDirection,
+  laneForTurn,
+  sampleQuadratic,
+} from './turn-path';
 import {
   DecisionEngine,
   DecisionEngineName,
@@ -186,7 +193,10 @@ export class SessionSimulation {
     if (this.spawnCountdown > 0) return;
     if (this.vehicles.length < MAX_VEHICLES) {
       const from = DIRECTIONS[Math.floor(this.random() * DIRECTIONS.length)];
-      const lane = this.random() < 0.5 ? 0 : 1;
+      const roll = this.random();
+      const turn: Turn =
+        roll < 0.6 ? 'straight' : roll < 0.8 ? 'right' : 'left';
+      const lane = laneForTurn(turn, this.random() < 0.5 ? 0 : 1);
       const { dx, dz } = Vehicle.DIRECTION[from];
       const off = laneOffset(from, lane);
       const vehicle = new Vehicle(
@@ -196,6 +206,8 @@ export class SessionSimulation {
         off.z - dz * SPAWN_DISTANCE,
         lane,
       );
+      vehicle.turn = turn;
+      vehicle.exitFrom = exitDirection(from, turn);
       this.vehicles.push(vehicle);
     }
     this.spawnCountdown = 1 + this.random() * 1.5;
@@ -239,6 +251,10 @@ export class SessionSimulation {
         v.state === 'queued' ||
         v.state === 'gone'
       ) {
+        continue;
+      }
+      if (v.state === 'crossing' && v.path) {
+        this.advanceAlongPath(v, TICK_DT);
         continue;
       }
       if (
@@ -404,6 +420,21 @@ export class SessionSimulation {
     return v.from === 'N' || v.from === 'S' ? v.x : v.z;
   }
 
+  // Avanza un vehiculo girando a lo largo de su curva. Al terminar, adopta la
+  // direccion de salida y sigue recto (el resto del pipeline no cambia).
+  private advanceAlongPath(v: Vehicle, dt: number): void {
+    const path = v.path;
+    if (!path) return;
+    v.pathT = Math.min(1, v.pathT + (v.speed * dt) / path.length);
+    const point = sampleQuadratic(path, v.pathT);
+    v.setPosition(point.x, point.z);
+    if (v.pathT >= 1) {
+      v.from = v.exitFrom;
+      v.path = null;
+      v.pathT = 0;
+    }
+  }
+
   private laneLateral(from: Vehicle['from'], lane: number): number {
     const off = laneOffset(from, lane);
     return from === 'N' || from === 'S' ? off.x : off.z;
@@ -502,6 +533,20 @@ export class SessionSimulation {
     vehicle.state = 'crossing';
     vehicle.authorized = true;
     vehicle.speed = CROSSING_SPEED;
+    const lane = laneForTurn(vehicle.turn, vehicle.lane);
+    vehicle.lane = lane;
+    vehicle.exitFrom = exitDirection(vehicle.from, vehicle.turn);
+    if (!vehicle.isPlayerControlled && vehicle.turn !== 'straight') {
+      vehicle.path = buildTurnPath(
+        vehicle.from,
+        lane,
+        vehicle.exitFrom,
+        vehicle.x,
+        vehicle.z,
+        STOP_LINE_DISTANCE,
+      );
+      vehicle.pathT = 0;
+    }
     this.occupants.push(vehicle);
     const index = this.queue.indexOf(vehicle);
     if (index !== -1) this.queue.splice(index, 1);
@@ -519,7 +564,7 @@ export class SessionSimulation {
   }
 
   private conflicts(a: Vehicle, b: Vehicle): boolean {
-    return directionsConflict(a.from, b.from);
+    return movementConflicts(a.from, a.turn, b.from, b.turn);
   }
 
   private playerVehicle(): Vehicle | null {

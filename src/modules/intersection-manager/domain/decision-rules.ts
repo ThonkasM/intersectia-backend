@@ -1,4 +1,4 @@
-import type { Direction } from './vehicle.model';
+import type { Direction, Turn } from './vehicle.model';
 import {
   INTERSECTION_HALF,
   MIN_FOLLOW_DISTANCE,
@@ -30,6 +30,24 @@ const OPPOSITE: Record<Direction, Direction> = {
 export function directionsConflict(a: Direction, b: Direction): boolean {
   if (a === b) return false;
   return OPPOSITE[a] !== b;
+}
+
+// Conflicto segun el movimiento previsto, no solo la direccion de entrada:
+// - misma direccion de entrada: no conflictua (se separan).
+// - direcciones opuestas: conflictua solo si alguno gira a la izquierda
+//   (cruza la trayectoria del que viene de frente); recto+recto y recto+derecha no.
+// - direcciones perpendiculares: siempre conflictuan.
+export function movementConflicts(
+  aFrom: Direction,
+  aTurn: Turn,
+  bFrom: Direction,
+  bTurn: Turn,
+): boolean {
+  if (aFrom === bFrom) return false;
+  if (OPPOSITE[aFrom] === bFrom) {
+    return aTurn === 'left' || bTurn === 'left';
+  }
+  return true;
 }
 
 // `progress` crece de 0 (spawn) a ~180 (salida); el centro esta en SPAWN_DISTANCE.
