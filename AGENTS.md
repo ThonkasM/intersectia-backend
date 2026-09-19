@@ -28,6 +28,22 @@ These conventions MUST be respected (from the design docs):
 - Environment variables via `@nestjs/config` (`ConfigModule.forRoot({ isGlobal: true })`), never hardcoded. See `.env.example`.
 - Explicit timeouts on ALL external calls inside the loop (AI service, DB, any HTTP call).
 
+## Multi-session (por visitante)
+
+`SimulationLoopService` ya **no** es una simulación global: es un gestor que mantiene
+`Map<sessionId, SessionSimulation>` y un único `setInterval` recorre todas las sesiones. El
+gateway usa **salas de socket.io** (`server.to(sessionId)`) y recibe el `sessionId` por el
+handshake (`auth.sessionId`) o `client.id`. Ver `docs/SESSIONS.md`.
+
+- Cada `SessionSimulation` tiene mutex de reentrancia (`ticking`) para que un tick lento (IA 150 ms)
+  no se solape.
+- Las escrituras a métricas reciben el `sessionId` de la sesión (no hay `currentSessionId` global).
+- Los payloads WS se validan con `ValidationPipe` + DTOs; CORS vía `CORS_ORIGIN`.
+
+## Docs
+
+- `docs/ARCHITECTURE.md`, `docs/SESSIONS.md`, `docs/API.md`.
+
 ## Notes
 
 - Do NOT add code comments to source files unless truly necessary.

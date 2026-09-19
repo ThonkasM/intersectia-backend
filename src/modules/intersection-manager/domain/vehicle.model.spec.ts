@@ -5,8 +5,12 @@ describe('laneOffset', () => {
     expect(laneOffset('N', 0)).toEqual({ x: 3.375, z: 0 });
   });
 
-  it('maps E lane 1 to the inner lateral offset', () => {
-    expect(laneOffset('E', 1)).toEqual({ x: 0, z: -1.125 });
+  it('maps E lane 0 to the outer/right lateral offset', () => {
+    expect(laneOffset('E', 0)).toEqual({ x: 0, z: 3.375 });
+  });
+
+  it('maps W lane 0 to the outer/right lateral offset', () => {
+    expect(laneOffset('W', 0)).toEqual({ x: 0, z: -3.375 });
   });
 });
 

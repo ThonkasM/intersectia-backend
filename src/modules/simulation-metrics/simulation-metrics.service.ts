@@ -6,7 +6,6 @@ import { SimMode } from '../intersection-manager/decision/decision.interface';
 @Injectable()
 export class SimulationMetricsService {
   private readonly logger = new Logger(SimulationMetricsService.name);
-  private currentSessionId: string | null = null;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -14,34 +13,30 @@ export class SimulationMetricsService {
     const session = await this.prisma.simulationSession.create({
       data: { mode },
     });
-    this.currentSessionId = session.id;
     return session.id;
   }
 
-  async recordCrossing(v: Vehicle): Promise<void> {
-    if (!this.currentSessionId) return;
-    try {
-      await this.prisma.vehicleCrossing.create({
-        data: {
-          sessionId: this.currentSessionId,
-          direction: v.from,
-          waitSeconds: v.waitedSeconds,
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to record crossing: ${String(err)}`);
-    }
+  async endSession(sessionId: string): Promise<void> {
+    await this.prisma.simulationSession.update({
+      where: { id: sessionId },
+      data: { endedAt: new Date() },
+    });
   }
 
-  async recordViolation(vehicleId: string): Promise<void> {
-    if (!this.currentSessionId) return;
-    try {
-      await this.prisma.intersectionViolation.create({
-        data: { sessionId: this.currentSessionId, vehicleId },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to record violation: ${String(err)}`);
-    }
+  async recordCrossing(sessionId: string, v: Vehicle): Promise<void> {
+    await this.prisma.vehicleCrossing.create({
+      data: {
+        sessionId,
+        direction: v.from,
+        waitSeconds: v.waitedSeconds,
+      },
+    });
+  }
+
+  async recordViolation(sessionId: string, vehicleId: string): Promise<void> {
+    await this.prisma.intersectionViolation.create({
+      data: { sessionId, vehicleId },
+    });
   }
 
   async getAverageWaitByMode(

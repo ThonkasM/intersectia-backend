@@ -1,0 +1,563 @@
+import { Logger } from '@nestjs/common';
+import {
+  LANE_WIDTH,
+  laneFromPosition,
+  laneOffset,
+  Vehicle,
+} from './vehicle.model';
+import {
+  APPROACH_SPEED,
+  CROSSING_BRAKE,
+  CROSSING_SPEED,
+  EXIT_DISTANCE,
+  GONE_DISTANCE,
+  INTERSECTION_HALF,
+  MIN_FOLLOW_DISTANCE,
+  SPAWN_DISTANCE,
+  STOP_LINE_DISTANCE,
+  applyBrake,
+  computeSeparationSpeed,
+  distanceToIntersection,
+  progress,
+  vehiclesOverlap,
+} from './intersection-state';
+import {
+  PLAYER_MAX_SPEED,
+  isPlayerTimedOut,
+  shouldFlagViolation,
+} from './player-vehicle.rules';
+import {
+  DecisionEngine,
+  DecisionEngineName,
+  DecisionEvent,
+  SimMode,
+} from '../decision/decision.interface';
+import { DeterministicDecisionService } from '../decision/deterministic-decision.service';
+import { RightPriorityDecisionService } from '../decision/right-priority-decision.service';
+import { AiDecisionClient } from '../decision/ai-decision.client';
+import { SimulationMetricsService } from '../../simulation-metrics/simulation-metrics.service';
+import { RemoteVehicleDto } from '../dto/remote-vehicle.dto';
+import { PlayerStateDto } from '../dto/player-state.dto';
+
+const TICK_DT = 0.05;
+const MAX_VEHICLES = 14;
+const MAX_PLAYERS = 4;
+const LANE_CHANGE_COOLDOWN = 1.5;
+const OVERTAKE_CLEARANCE = 7;
+const CRASH_DURATION = 2.0;
+const CRASH_COOLDOWN = 1.5;
+const DIRECTIONS: Array<Vehicle['from']> = ['N', 'S', 'E', 'W'];
+
+export interface SessionSimulationDeps {
+  sessionId: string;
+  metrics: SimulationMetricsService;
+  deterministicDecision: DeterministicDecisionService;
+  rightPriorityDecision: RightPriorityDecisionService;
+  aiDecisionClient: AiDecisionClient;
+  emitState: (vehicles: RemoteVehicleDto[]) => void;
+  emitDecision: (event: DecisionEvent) => void;
+  logger: Logger;
+}
+
+export class SessionSimulation {
+  private readonly vehicles: Vehicle[] = [];
+  private readonly queue: Vehicle[] = [];
+  private occupants: Vehicle[] = [];
+  private mode: SimMode = 'managed';
+  private spawnCountdown = 1.5;
+  private nextId = 0;
+  private ticking = false;
+  private disposed = false;
+  private dbSessionId: string | null = null;
+  private readonly playerLastSeen = new Map<string, number>();
+  private collisionsEnabled = false;
+
+  constructor(private readonly deps: SessionSimulationDeps) {}
+
+  get sessionId(): string {
+    return this.deps.sessionId;
+  }
+
+  async init(): Promise<void> {
+    try {
+      this.dbSessionId = await this.deps.metrics.startSession(this.mode);
+    } catch (err) {
+      this.deps.logger.warn(
+        `[${this.sessionId}] failed to start session: ${String(err)}`,
+      );
+    }
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    if (this.dbSessionId) {
+      await this.deps.metrics
+        .endSession(this.dbSessionId)
+        .catch((err: unknown) =>
+          this.deps.logger.warn(
+            `[${this.sessionId}] failed to end session: ${String(err)}`,
+          ),
+        );
+    }
+  }
+
+  private getEngine(): DecisionEngine {
+    switch (this.mode) {
+      case 'managed-ai':
+        return this.deps.aiDecisionClient;
+      case 'traditional':
+        return this.deps.rightPriorityDecision;
+      default:
+        return this.deps.deterministicDecision;
+    }
+  }
+
+  setMode(mode: SimMode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    // Un vehiculo encolado que ya no esta en la cola volveria a quedar inmóvil:
+    // lo devolvemos a "approach" para que se re-encola con el nuevo motor.
+    for (const v of this.vehicles) {
+      if (v.state === 'queued') v.state = 'approach';
+    }
+    this.queue.length = 0;
+    this.deps.logger.log(`[${this.sessionId}] mode set to ${mode}`);
+    void this.restartDbSession();
+  }
+
+  private async restartDbSession(): Promise<void> {
+    if (this.dbSessionId) {
+      await this.dispose();
+      this.disposed = false;
+    }
+    await this.init();
+  }
+
+  async tick(): Promise<void> {
+    if (this.ticking || this.disposed) return;
+    this.ticking = true;
+    try {
+      this.handlePlayerVehicles();
+      this.maybeSpawn();
+      this.moveVehicles();
+      this.detectViolations();
+      this.detectCollisions();
+      await this.decideAndRelease();
+      this.cleanupFinished();
+      this.deps.emitState(this.toSnapshot());
+    } catch (err) {
+      this.deps.logger.error(
+        `[${this.sessionId}] tick failed: ${String(err)}`,
+      );
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  private handlePlayerVehicles(): void {
+    const now = Date.now();
+    for (const v of this.vehicles) {
+      if (!v.isPlayerControlled) continue;
+      if (isPlayerTimedOut(this.playerLastSeen.get(v.id) ?? 0, now)) {
+        this.deps.logger.warn(
+          `[${this.sessionId}] player vehicle ${v.id} handed over to autonomous mode`,
+        );
+        v.isPlayerControlled = false;
+        this.playerLastSeen.delete(v.id);
+      }
+    }
+  }
+
+  private maybeSpawn(): void {
+    this.spawnCountdown -= TICK_DT;
+    if (this.spawnCountdown > 0) return;
+    if (this.vehicles.length < MAX_VEHICLES) {
+      const from = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
+      const lane = Math.random() < 0.5 ? 0 : 1;
+      const { dx, dz } = Vehicle.DIRECTION[from];
+      const off = laneOffset(from, lane);
+      const vehicle = new Vehicle(
+        `v-${this.nextId++}`,
+        from,
+        off.x - dx * SPAWN_DISTANCE,
+        off.z - dz * SPAWN_DISTANCE,
+        lane,
+      );
+      this.vehicles.push(vehicle);
+    }
+    this.spawnCountdown = 1 + Math.random() * 1.5;
+  }
+
+  private moveVehicles(): void {
+    for (const v of this.vehicles) {
+      if (v.crashTimer > 0) {
+        v.crashTimer -= TICK_DT;
+        if (v.crashTimer <= 0) {
+          v.crashed = false;
+          v.crashCooldown = CRASH_COOLDOWN;
+        }
+      } else if (v.crashCooldown > 0) {
+        v.crashCooldown -= TICK_DT;
+      }
+    }
+
+    const player = this.playerVehicle();
+    const yieldToPlayer = player?.state === 'crossing';
+    for (const v of this.vehicles) {
+      if (
+        v.isPlayerControlled ||
+        v.frozen ||
+        v.crashed ||
+        v.state === 'queued' ||
+        v.state === 'gone'
+      ) {
+        continue;
+      }
+      const cruise = v.state === 'crossing' ? CROSSING_SPEED : APPROACH_SPEED;
+      if (v.speed < cruise && !(yieldToPlayer && v.state === 'crossing')) {
+        v.speed = Math.min(cruise, v.speed + CROSSING_BRAKE * TICK_DT);
+      }
+    }
+    for (const v of this.vehicles) {
+      if (
+        v.isPlayerControlled ||
+        v.frozen ||
+        v.crashed ||
+        v.state === 'queued' ||
+        v.state === 'gone'
+      ) {
+        continue;
+      }
+      if (
+        yieldToPlayer &&
+        player &&
+        v.state === 'crossing' &&
+        this.conflicts(v, player)
+      ) {
+        v.speed = applyBrake(v.speed, TICK_DT);
+      }
+      const ahead = this.findAhead(v);
+      if (ahead) {
+        v.speed = computeSeparationSpeed(v, ahead);
+        const gap = progress(ahead) - progress(v);
+        if (
+          gap < MIN_FOLLOW_DISTANCE &&
+          v.laneChangeCooldown <= 0 &&
+          this.canOvertake(v)
+        ) {
+          v.lane = 1 - v.lane;
+          v.laneChangeCooldown = LANE_CHANGE_COOLDOWN;
+        }
+      }
+      v.laneChangeCooldown = Math.max(0, v.laneChangeCooldown - TICK_DT);
+      v.steerToLane(TICK_DT);
+      v.advance(TICK_DT);
+    }
+    for (const v of this.vehicles) {
+      if (v.isPlayerControlled) {
+        const p = progress(v);
+        const distance = distanceToIntersection(v);
+        if (p >= SPAWN_DISTANCE + GONE_DISTANCE) {
+          v.state = 'gone';
+        } else if (v.authorized && p >= SPAWN_DISTANCE - INTERSECTION_HALF) {
+          v.state = 'crossing';
+        } else if (
+          !v.authorized &&
+          distance <= STOP_LINE_DISTANCE &&
+          distance > INTERSECTION_HALF
+        ) {
+          v.state = 'queued';
+          v.speed = 0;
+          if (!this.queue.includes(v)) this.queue.push(v);
+        } else {
+          v.state = 'approach';
+        }
+        continue;
+      }
+      if (v.frozen || v.crashed) continue;
+      if (
+        v.state === 'approach' &&
+        distanceToIntersection(v) <= STOP_LINE_DISTANCE
+      ) {
+        v.state = 'queued';
+        v.speed = 0;
+        if (!this.queue.includes(v)) this.queue.push(v);
+      } else if (
+        v.state === 'crossing' &&
+        distanceToIntersection(v) > GONE_DISTANCE
+      ) {
+        v.state = 'success';
+      } else if (
+        v.state === 'success' &&
+        distanceToIntersection(v) > EXIT_DISTANCE
+      ) {
+        v.state = 'gone';
+      }
+    }
+    for (const v of this.vehicles) {
+      if (v.isPlayerControlled || v.frozen || v.crashed) continue;
+      if (v.state === 'queued') {
+        v.waitedSeconds += TICK_DT;
+      }
+    }
+  }
+
+  private detectViolations(): void {
+    for (const v of this.vehicles) {
+      if (!v.isPlayerControlled) continue;
+      if (shouldFlagViolation(v)) {
+        if (!v.violationFlagged) {
+          v.violationFlagged = true;
+          if (this.dbSessionId) {
+            void this.deps.metrics
+              .recordViolation(this.dbSessionId, v.id)
+              .catch((err: unknown) =>
+                this.deps.logger.warn(
+                  `[${this.sessionId}] failed to record violation: ${String(err)}`,
+                ),
+              );
+          }
+        }
+      } else {
+        v.violationFlagged = false;
+      }
+    }
+  }
+
+  private detectCollisions(): void {
+    if (!this.collisionsEnabled) return;
+    const active = this.vehicles.filter((v) => v.state !== 'gone');
+    for (let i = 0; i < active.length; i += 1) {
+      for (let j = i + 1; j < active.length; j += 1) {
+        const a = active[i];
+        const b = active[j];
+        if (a.crashed || b.crashed) continue;
+        if (a.crashCooldown > 0 || b.crashCooldown > 0) continue;
+        if (vehiclesOverlap(a, b)) {
+          this.crashVehicle(a);
+          this.crashVehicle(b);
+        }
+      }
+    }
+  }
+
+  private crashVehicle(v: Vehicle): void {
+    v.crashed = true;
+    v.crashTimer = CRASH_DURATION;
+    v.speed = 0;
+  }
+
+  setCollisions(enabled: boolean): void {
+    this.collisionsEnabled = enabled;
+    if (!enabled) {
+      for (const v of this.vehicles) {
+        v.crashed = false;
+        v.crashTimer = 0;
+        v.crashCooldown = 0;
+      }
+    }
+    this.deps.logger.log(
+      `[${this.sessionId}] collisions ${enabled ? 'enabled' : 'disabled'}`,
+    );
+  }
+
+  private findAhead(v: Vehicle): Vehicle | null {
+    const myProgress = progress(v);
+    const myLateral = this.lateralOf(v);
+    let ahead: Vehicle | null = null;
+    let minDiff = Infinity;
+    for (const other of this.vehicles) {
+      if (other === v) continue;
+      if (other.from !== v.from || other.state === 'gone') continue;
+      if (Math.abs(this.lateralOf(other) - myLateral) >= LANE_WIDTH) continue;
+      const otherProgress = progress(other);
+      if (otherProgress <= myProgress) continue;
+      const diff = otherProgress - myProgress;
+      if (diff < minDiff) {
+        minDiff = diff;
+        ahead = other;
+      }
+    }
+    return ahead;
+  }
+
+  private lateralOf(v: Vehicle): number {
+    return v.from === 'N' || v.from === 'S' ? v.x : v.z;
+  }
+
+  private canOvertake(v: Vehicle): boolean {
+    const targetLane = 1 - v.lane;
+    const off = laneOffset(v.from, targetLane);
+    const targetLateral = v.from === 'N' || v.from === 'S' ? off.x : off.z;
+    const myProgress = progress(v);
+    for (const other of this.vehicles) {
+      if (other === v) continue;
+      if (other.from !== v.from || other.state === 'gone') continue;
+      if (Math.abs(this.lateralOf(other) - targetLateral) >= LANE_WIDTH)
+        continue;
+      const otherProgress = progress(other);
+      if (otherProgress <= myProgress) continue;
+      if (otherProgress - myProgress < OVERTAKE_CLEARANCE) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private async decideAndRelease(): Promise<void> {
+    this.occupants = this.occupants.filter(
+      (o) => o.state !== 'gone' && o.state !== 'success',
+    );
+    if (this.playerInsideIntersection()) return;
+    const eligible = this.queue.filter(
+      (v) => !v.frozen && v.state !== 'crossing',
+    );
+    if (eligible.length === 0) return;
+
+    const occupant = this.occupants[0] ?? null;
+    const id = await this.getEngine().decideNextCrossing(eligible, occupant);
+    const primary = id ? eligible.find((v) => v.id === id) : undefined;
+    if (primary && !this.conflictsWithOccupants(primary)) {
+      this.grantCrossing(primary);
+    }
+
+    for (const vehicle of [...this.queue]) {
+      if (vehicle.frozen || vehicle.state === 'crossing') continue;
+      if (this.conflictsWithOccupants(vehicle)) continue;
+      this.grantCrossing(vehicle);
+    }
+  }
+
+  private grantCrossing(vehicle: Vehicle): void {
+    vehicle.state = 'crossing';
+    vehicle.authorized = true;
+    vehicle.speed = CROSSING_SPEED;
+    this.occupants.push(vehicle);
+    const index = this.queue.indexOf(vehicle);
+    if (index !== -1) this.queue.splice(index, 1);
+    this.deps.emitDecision({
+      vehicleId: vehicle.id,
+      from: vehicle.from,
+      waitSeconds: Math.round(vehicle.waitedSeconds * 100) / 100,
+      engine: this.currentEngineName(),
+      at: Date.now(),
+    });
+  }
+
+  private conflictsWithOccupants(v: Vehicle): boolean {
+    return this.occupants.some((o) => this.conflicts(o, v));
+  }
+
+  private conflicts(a: Vehicle, b: Vehicle): boolean {
+    if (a.from === b.from) return false;
+    const opposite: Record<Vehicle['from'], Vehicle['from']> = {
+      N: 'S',
+      S: 'N',
+      E: 'W',
+      W: 'E',
+    };
+    return opposite[a.from] !== b.from;
+  }
+
+  private playerInsideIntersection(): boolean {
+    return this.playerVehicle()?.state === 'crossing';
+  }
+
+  private playerVehicle(): Vehicle | null {
+    return this.vehicles.find((v) => v.isPlayerControlled) ?? null;
+  }
+
+  private currentEngineName(): DecisionEngineName {
+    switch (this.mode) {
+      case 'traditional':
+        return 'right-priority';
+      case 'managed-ai':
+        return 'ai';
+      default:
+        return 'fifo';
+    }
+  }
+
+  private cleanupFinished(): void {
+    const remaining: Vehicle[] = [];
+    for (const v of this.vehicles) {
+      if (v.state === 'gone') {
+        this.playerLastSeen.delete(v.id);
+        if (!v.isPlayerControlled && this.dbSessionId) {
+          void this.deps.metrics
+            .recordCrossing(this.dbSessionId, v)
+            .catch((err: unknown) =>
+              this.deps.logger.warn(
+                `[${this.sessionId}] failed to record crossing: ${String(err)}`,
+              ),
+            );
+        }
+      } else {
+        remaining.push(v);
+      }
+    }
+    this.vehicles.length = 0;
+    this.vehicles.push(...remaining);
+  }
+
+  private toSnapshot(): RemoteVehicleDto[] {
+    return this.vehicles.map((v) => ({
+      id: v.id,
+      x: Math.round(v.x * 1000) / 1000,
+      z: Math.round(v.z * 1000) / 1000,
+      from: v.from,
+      state: v.state,
+      frozen: v.frozen,
+      crashed: v.crashed,
+    }));
+  }
+
+  setFrozen(id: string, frozen: boolean): void {
+    const vehicle = this.vehicles.find((v) => v.id === id);
+    if (!vehicle || vehicle.isPlayerControlled) return;
+    vehicle.frozen = frozen;
+    if (frozen) vehicle.speed = 0;
+    this.deps.logger.log(
+      `[${this.sessionId}] vehicle ${id} ${frozen ? 'frozen' : 'resumed'}`,
+    );
+  }
+
+  reset(): void {
+    this.vehicles.length = 0;
+    this.queue.length = 0;
+    this.occupants = [];
+    this.spawnCountdown = 1.5;
+    this.nextId = 0;
+    this.playerLastSeen.clear();
+    this.deps.logger.log(`[${this.sessionId}] reset`);
+    void this.restartDbSession();
+  }
+
+  upsertPlayerVehicle(state: PlayerStateDto): void {
+    const existing = this.vehicles.find((v) => v.id === state.id);
+    if (existing) {
+      existing.from = state.from;
+      existing.setPosition(state.x, state.z);
+      existing.lane = laneFromPosition(state.from, state.x, state.z);
+      existing.speed = Math.min(Math.max(state.speed, 0), PLAYER_MAX_SPEED);
+      existing.isPlayerControlled = true;
+      existing.frozen = false;
+      existing.crashed = false;
+      this.playerLastSeen.set(state.id, Date.now());
+      return;
+    }
+    const players = this.vehicles.filter((v) => v.isPlayerControlled).length;
+    if (players >= MAX_PLAYERS || this.vehicles.length >= MAX_VEHICLES) return;
+    const vehicle = new Vehicle(
+      state.id,
+      state.from,
+      state.x,
+      state.z,
+      laneFromPosition(state.from, state.x, state.z),
+    );
+    vehicle.isPlayerControlled = true;
+    vehicle.speed = Math.min(Math.max(state.speed, 0), PLAYER_MAX_SPEED);
+    this.vehicles.push(vehicle);
+    this.playerLastSeen.set(state.id, Date.now());
+  }
+}

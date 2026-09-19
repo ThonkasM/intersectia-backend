@@ -6,8 +6,8 @@ export type VehicleState = 'approach' | 'queued' | 'crossing' | 'success' | 'gon
 export const LANES: Record<Direction, [number, number]> = {
   N: [3.375, 1.125],
   S: [-3.375, -1.125],
-  E: [-3.375, -1.125],
-  W: [3.375, 1.125],
+  E: [3.375, 1.125],
+  W: [-3.375, -1.125],
 };
 
 export const LANE_WIDTH = 2.25;
@@ -63,6 +63,8 @@ export class Vehicle {
   crashed: boolean = false;
   crashTimer: number = 0;
   crashCooldown: number = 0;
+  authorized: boolean = false;
+  violationFlagged: boolean = false;
 
   constructor(id: string, from: Direction, x: number, z: number, lane = 0) {
     this.id = id;

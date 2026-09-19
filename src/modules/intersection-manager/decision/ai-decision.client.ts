@@ -31,6 +31,7 @@ export class AiDecisionClient implements DecisionEngine {
     queue: Vehicle[],
     occupant: Vehicle | null,
   ): Promise<string | null> {
+    if (queue.length === 0) return null;
     const occupantPayload = occupant
       ? {
           id: occupant.id,
@@ -38,7 +39,6 @@ export class AiDecisionClient implements DecisionEngine {
           waitedSeconds: occupant.waitedSeconds,
         }
       : null;
-    if (occupant || queue.length === 0) return null;
     try {
       const response = await firstValueFrom(
         this.http
