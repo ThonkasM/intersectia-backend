@@ -47,6 +47,15 @@ Reglas puras en `domain/decision-rules.ts` (con tests propios):
 - **Reacción al jugador**: el jugador **ya no congela toda la intersección**. Si está dentro,
   solo ceden las direcciones que conflictúan con él; las opuestas/sin conflicto siguen
   cruzando. Los autónomos además lo esquivan por el carril libre y ceden el paso al cruzarse.
+- **Anti-inanición**: un vehículo que espera más de `STARVATION_LIMIT_SECONDS` (25 s) se
+  prioriza y puede cruzar aunque el jugador esté bloqueando su eje; así un jugador detenido no
+  inaniza una dirección para siempre.
+
+## Métricas de nodo
+
+`GET /metrics/node?window=<seg>` calcula, sobre los cruces de la ventana: throughput por
+minuto, espera promedio, **p95** y **equidad** por dirección (brecha entre la mejor y la peor
+dirección). Sirve para evaluar el desempeño del nodo, no solo el total histórico.
 
 ## Persistencia
 

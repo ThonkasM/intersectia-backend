@@ -16,6 +16,10 @@ export const EXIT_CLEARANCE = 22;
 // Debajo de esta velocidad se considera que un vehiculo esta detenido.
 export const STOPPED_SPEED = 1;
 
+// Si un vehiculo espera mas que esto, se considera en riesgo de inanicion: se
+// prioriza y se le permite cruzar aunque el jugador este bloqueando su eje.
+export const STARVATION_LIMIT_SECONDS = 25;
+
 const OPPOSITE: Record<Direction, Direction> = {
   N: 'S',
   S: 'N',
@@ -51,6 +55,13 @@ export function exitBlockedBy(
 
 // Un vehiculo detenido por delante no deberia detener al de atras: si el
 // carril vecino esta libre, se empieza el cambio de carril con mas antelacion.
+export function isStarving(
+  waitedSeconds: number,
+  limit = STARVATION_LIMIT_SECONDS,
+): boolean {
+  return waitedSeconds >= limit;
+}
+
 export function shouldChangeLaneForQueue(
   gap: number,
   aheadStopped: boolean,

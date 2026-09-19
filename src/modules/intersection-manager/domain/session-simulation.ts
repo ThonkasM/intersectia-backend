@@ -28,6 +28,7 @@ import {
 import {
   directionsConflict,
   exitBlockedBy,
+  isStarving,
   occupantHasCleared,
   shouldChangeLaneForQueue,
   STOPPED_SPEED,
@@ -428,7 +429,17 @@ export class SessionSimulation {
     if (eligible.length === 0) return;
 
     const occupant = this.occupants[0] ?? null;
-    const id = await this.getEngine().decideNextCrossing(eligible, occupant);
+    const starving = eligible.reduce<Vehicle | null>(
+      (worst, v) =>
+        isStarving(v.waitedSeconds) &&
+        (!worst || v.waitedSeconds > worst.waitedSeconds)
+          ? v
+          : worst,
+      null,
+    );
+    const id = starving
+      ? starving.id
+      : await this.getEngine().decideNextCrossing(eligible, occupant);
     const primary = id ? eligible.find((v) => v.id === id) : undefined;
     if (primary && this.canGrant(primary)) this.grantCrossing(primary);
 
@@ -443,7 +454,11 @@ export class SessionSimulation {
   // conflictua con el ocupante ni con el jugador dentro de la interseccion.
   private canGrant(vehicle: Vehicle): boolean {
     if (this.conflictsWithOccupants(vehicle)) return false;
-    if (this.playerBlocks(vehicle)) return false;
+    // Un vehiculo en riesgo de inanicion puede cruzar aunque el jugador bloquee
+    // su eje: evita que un jugador detenido detenga una direccion indefinidamente.
+    if (!isStarving(vehicle.waitedSeconds) && this.playerBlocks(vehicle)) {
+      return false;
+    }
     if (this.exitBlocked(vehicle)) return false;
     return true;
   }

@@ -3,6 +3,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { Vehicle } from '../intersection-manager/domain/vehicle.model';
 import { SimMode } from '../intersection-manager/decision/decision.interface';
 
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 @Injectable()
 export class SimulationMetricsService {
   private readonly logger = new Logger(SimulationMetricsService.name);
@@ -50,6 +54,62 @@ export class SimulationMetricsService {
     return {
       avgWaitSeconds: agg._avg.waitSeconds,
       total: agg._count,
+    };
+  }
+
+  async getNodeMetrics(windowSeconds = 60): Promise<{
+    windowSeconds: number;
+    totalCrossings: number;
+    throughputPerMinute: number;
+    avgWaitSeconds: number | null;
+    p95WaitSeconds: number | null;
+    byDirection: Record<string, { total: number; avgWaitSeconds: number | null }>;
+    fairnessGapSeconds: number | null;
+  }> {
+    const since = new Date(Date.now() - windowSeconds * 1000);
+    const rows = await this.prisma.vehicleCrossing.findMany({
+      where: { crossedAt: { gte: since } },
+      select: { direction: true, waitSeconds: true },
+      orderBy: { waitSeconds: 'asc' },
+      take: 5000,
+    });
+    const total = rows.length;
+    const waits = rows.map((row) => row.waitSeconds);
+    const avg = total
+      ? waits.reduce((sum, value) => sum + value, 0) / total
+      : null;
+    const p95 = total
+      ? waits[Math.min(total - 1, Math.ceil(0.95 * total) - 1)]
+      : null;
+    const byDirection: Record<
+      string,
+      { total: number; avgWaitSeconds: number | null }
+    > = {};
+    const averages: number[] = [];
+    for (const direction of ['N', 'S', 'E', 'W']) {
+      const dirWaits = rows
+        .filter((row) => row.direction === direction)
+        .map((row) => row.waitSeconds);
+      const dirAvg = dirWaits.length
+        ? dirWaits.reduce((sum, value) => sum + value, 0) / dirWaits.length
+        : null;
+      byDirection[direction] = {
+        total: dirWaits.length,
+        avgWaitSeconds: dirAvg === null ? null : round3(dirAvg),
+      };
+      if (dirAvg !== null) averages.push(dirAvg);
+    }
+    const fairnessGap = averages.length
+      ? Math.max(...averages) - Math.min(...averages)
+      : null;
+    return {
+      windowSeconds,
+      totalCrossings: total,
+      throughputPerMinute: round3(total / (windowSeconds / 60)),
+      avgWaitSeconds: avg === null ? null : round3(avg),
+      p95WaitSeconds: p95 === null ? null : round3(p95),
+      byDirection,
+      fairnessGapSeconds: fairnessGap === null ? null : round3(fairnessGap),
     };
   }
 

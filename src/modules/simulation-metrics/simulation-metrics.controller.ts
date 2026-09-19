@@ -19,6 +19,17 @@ export class SimulationMetricsController {
     return this.metrics.getAverageWaitByMode(mode);
   }
 
+  @Get('node')
+  getNode(
+    @Query('window') window?: string,
+  ): ReturnType<SimulationMetricsService['getNodeMetrics']> {
+    const parsed = window === undefined ? 60 : Number(window);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new BadRequestException(`Invalid window: ${String(window)}`);
+    }
+    return this.metrics.getNodeMetrics(Math.min(Math.floor(parsed), 3600));
+  }
+
   @Get('summary')
   getSummary(): Promise<{
     totalCrossings: number;

@@ -2,9 +2,11 @@ import {
   directionsConflict,
   EXIT_CLEARANCE,
   exitBlockedBy,
+  isStarving,
   occupantHasCleared,
   OCCUPANT_CLEAR_DISTANCE,
   shouldChangeLaneForQueue,
+  STARVATION_LIMIT_SECONDS,
   withinIntersection,
 } from './decision-rules';
 import { INTERSECTION_HALF, MIN_FOLLOW_DISTANCE, SPAWN_DISTANCE } from './intersection-state';
@@ -50,5 +52,11 @@ describe('decision-rules', () => {
   it('never changes lane on cooldown or when the target lane is not clear', () => {
     expect(shouldChangeLaneForQueue(1, true, 1, true)).toBe(false);
     expect(shouldChangeLaneForQueue(1, true, 0, false)).toBe(false);
+  });
+
+  it('flags starvation once the wait exceeds the limit', () => {
+    expect(isStarving(STARVATION_LIMIT_SECONDS - 0.1)).toBe(false);
+    expect(isStarving(STARVATION_LIMIT_SECONDS)).toBe(true);
+    expect(isStarving(STARVATION_LIMIT_SECONDS + 5)).toBe(true);
   });
 });

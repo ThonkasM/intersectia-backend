@@ -7,10 +7,25 @@
 | GET | `/` | `{ name: "IntersectIA Backend", status: "ok" }` |
 | GET | `/metrics/avg?mode=<mode>` | `{ avgWaitSeconds, total }` |
 | GET | `/metrics/summary` | `{ totalCrossings, totalViolations, avgWaitByMode }` |
+| GET | `/metrics/node?window=<seg>` | Throughput, p95, promedio y equidad por dirección (ventana en segundos, 60 por defecto, máx 3600) |
 | POST | `/ai/chat` | `{ message, sessionId? }` → `{ answer }` (proxy a la IA) |
 | GET | `/ai/chat/topics` | `{ topics: [{ slug, titulo, categoria }] }` |
 
 `mode` ∈ `traditional | managed | managed-ai`. `/ai/chat` tiene rate-limit por sesión (20 req/min).
+
+`GET /metrics/node` devuelve, para la ventana pedida:
+
+```json
+{
+  "windowSeconds": 300,
+  "totalCrossings": 130,
+  "throughputPerMinute": 26,
+  "avgWaitSeconds": 0.448,
+  "p95WaitSeconds": 1.4,
+  "byDirection": { "N": { "total": 37, "avgWaitSeconds": 0.404 }, "...": {} },
+  "fairnessGapSeconds": 0.381
+}
+```
 
 ## WebSocket (socket.io)
 
