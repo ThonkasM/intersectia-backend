@@ -52,6 +52,7 @@ const MAX_VEHICLES = 14;
 const MAX_PLAYERS = 4;
 const LANE_CHANGE_COOLDOWN = 1.5;
 const OVERTAKE_CLEARANCE = 7;
+const LANE_BALANCE_LOOKAHEAD = 40;
 const CRASH_DURATION = 2.0;
 const CRASH_COOLDOWN = 1.5;
 const DIRECTIONS: Array<Vehicle['from']> = ['N', 'S', 'E', 'W'];
@@ -257,11 +258,14 @@ export class SessionSimulation {
             gap,
             ahead.speed < STOPPED_SPEED,
             v.laneChangeCooldown,
-            this.canOvertake(v),
+            this.isLaneClear(v, 1 - v.lane),
           )
         ) {
-          v.lane = 1 - v.lane;
-          v.laneChangeCooldown = LANE_CHANGE_COOLDOWN;
+          const target = this.freerLane(v);
+          if (target !== v.lane) {
+            v.lane = target;
+            v.laneChangeCooldown = LANE_CHANGE_COOLDOWN;
+          }
         }
       }
       v.laneChangeCooldown = Math.max(0, v.laneChangeCooldown - TICK_DT);
@@ -400,23 +404,42 @@ export class SessionSimulation {
     return v.from === 'N' || v.from === 'S' ? v.x : v.z;
   }
 
-  private canOvertake(v: Vehicle): boolean {
-    const targetLane = 1 - v.lane;
-    const off = laneOffset(v.from, targetLane);
-    const targetLateral = v.from === 'N' || v.from === 'S' ? off.x : off.z;
+  private laneLateral(from: Vehicle['from'], lane: number): number {
+    const off = laneOffset(from, lane);
+    return from === 'N' || from === 'S' ? off.x : off.z;
+  }
+
+  private laneAheadCount(v: Vehicle, lane: number, lookahead: number): number {
+    const lateral = this.laneLateral(v.from, lane);
     const myProgress = progress(v);
+    let count = 0;
     for (const other of this.vehicles) {
-      if (other === v) continue;
-      if (other.from !== v.from || other.state === 'gone') continue;
-      if (Math.abs(this.lateralOf(other) - targetLateral) >= LANE_WIDTH)
+      if (other === v || other.from !== v.from || other.state === 'gone') {
         continue;
-      const otherProgress = progress(other);
-      if (otherProgress <= myProgress) continue;
-      if (otherProgress - myProgress < OVERTAKE_CLEARANCE) {
-        return false;
       }
+      if (Math.abs(this.lateralOf(other) - lateral) >= LANE_WIDTH) continue;
+      const diff = progress(other) - myProgress;
+      if (diff > 0 && diff <= lookahead) count += 1;
     }
-    return true;
+    return count;
+  }
+
+  private isLaneClear(v: Vehicle, lane: number): boolean {
+    return this.laneAheadCount(v, lane, OVERTAKE_CLEARANCE) === 0;
+  }
+
+  // Entre los dos carriles, elige el que tiene menos vehiculos por delante
+  // (equilibra el uso de carriles y reduce esperas). Mantiene el actual si no mejora.
+  private freerLane(v: Vehicle): number {
+    const alternative = 1 - v.lane;
+    if (!this.isLaneClear(v, alternative)) return v.lane;
+    const currentCount = this.laneAheadCount(v, v.lane, LANE_BALANCE_LOOKAHEAD);
+    const alternativeCount = this.laneAheadCount(
+      v,
+      alternative,
+      LANE_BALANCE_LOOKAHEAD,
+    );
+    return alternativeCount < currentCount ? alternative : v.lane;
   }
 
   private async decideAndRelease(): Promise<void> {
