@@ -659,6 +659,7 @@ export class SessionSimulation {
       state: v.state,
       frozen: v.frozen,
       crashed: v.crashed,
+      turn: v.turn,
     }));
   }
 

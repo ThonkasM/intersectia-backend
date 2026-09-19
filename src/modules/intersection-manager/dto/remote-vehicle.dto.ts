@@ -1,4 +1,4 @@
-import { VehicleState } from '../domain/vehicle.model';
+import { Turn, VehicleState } from '../domain/vehicle.model';
 
 export class RemoteVehicleDto {
   id: string;
@@ -8,4 +8,5 @@ export class RemoteVehicleDto {
   state: VehicleState;
   frozen: boolean;
   crashed: boolean;
+  turn: Turn;
 }
