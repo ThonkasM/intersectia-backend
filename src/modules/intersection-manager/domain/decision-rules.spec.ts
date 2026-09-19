@@ -26,9 +26,16 @@ describe('decision-rules', () => {
 
   it('does not conflict for same-direction or straight/right-opposite traffic', () => {
     expect(movementConflicts('N', 'straight', 'N', 'left')).toBe(false);
+    expect(movementConflicts('N', 'straight', 'N', 'straight')).toBe(false);
     expect(movementConflicts('N', 'straight', 'S', 'straight')).toBe(false);
     expect(movementConflicts('N', 'straight', 'S', 'right')).toBe(false);
     expect(movementConflicts('N', 'right', 'S', 'right')).toBe(false);
+  });
+
+  it('conflicts for two same-side turns from the same direction (merge into one exit lane)', () => {
+    expect(movementConflicts('N', 'right', 'N', 'right')).toBe(true);
+    expect(movementConflicts('N', 'left', 'N', 'left')).toBe(true);
+    expect(movementConflicts('N', 'right', 'N', 'left')).toBe(false);
   });
 
   it('conflicts when an opposite movement turns left', () => {

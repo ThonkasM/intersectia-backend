@@ -33,7 +33,9 @@ export function directionsConflict(a: Direction, b: Direction): boolean {
 }
 
 // Conflicto segun el movimiento previsto, no solo la direccion de entrada:
-// - misma direccion de entrada: no conflictua (se separan).
+// - misma direccion de entrada: rectos no conflictuan (van por carriles
+//   paralelos), pero dos giros al MISMO lado convergen en el mismo carril de
+//   salida y deben liberarse espaciados.
 // - direcciones opuestas: conflictua solo si alguno gira a la izquierda
 //   (cruza la trayectoria del que viene de frente); recto+recto y recto+derecha no.
 // - direcciones perpendiculares: siempre conflictuan.
@@ -43,7 +45,9 @@ export function movementConflicts(
   bFrom: Direction,
   bTurn: Turn,
 ): boolean {
-  if (aFrom === bFrom) return false;
+  if (aFrom === bFrom) {
+    return aTurn !== 'straight' && aTurn === bTurn;
+  }
   if (OPPOSITE[aFrom] === bFrom) {
     return aTurn === 'left' || bTurn === 'left';
   }

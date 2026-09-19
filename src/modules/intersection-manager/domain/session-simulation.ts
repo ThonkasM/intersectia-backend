@@ -473,8 +473,10 @@ export class SessionSimulation {
 
   // Entre los dos carriles, elige el que tiene menos vehiculos por delante
   // (equilibra el uso de carriles y reduce esperas). Mantiene el actual si no mejora.
+  // Un giro queda restringido a su carril (derecha->exterior, izquierda->interior).
   private freerLane(v: Vehicle): number {
     const alternative = 1 - v.lane;
+    if (laneForTurn(v.turn, alternative) !== alternative) return v.lane;
     if (!this.isLaneClear(v, alternative)) return v.lane;
     const currentCount = this.laneAheadCount(v, v.lane, LANE_BALANCE_LOOKAHEAD);
     const alternativeCount = this.laneAheadCount(

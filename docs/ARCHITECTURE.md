@@ -59,7 +59,10 @@ Reglas puras en `domain/decision-rules.ts` (con tests propios):
   desde su carril de entrada al de salida (derecha → carril exterior, izquierda → interior) y, al
   terminar, adoptan la dirección de salida y siguen recto. Los conflictos se resuelven por
   **movimiento** (`movementConflicts`): recto+recto y recto+derecha en ejes opuestos **no**
-  conflictúan (solo la izquierda cruza al de enfrente), lo que reduce esperas innecesarias.
+  conflictúan (solo la izquierda cruza al de enfrente), lo que reduce esperas innecesarias. En
+  cambio, **dos giros al mismo lado desde el mismo sentido conflictúan** (convergen en el mismo
+  carril de salida) y se liberan espaciados; además, un giro queda restringido a su carril
+  (derecha → exterior, izquierda → interior) para que no se crucen trayectorias paralelas.
 - **Balanceo de carriles**: al cambiar de carril se elige el carril con menos vehículos por delante.
 
 ## Métricas de nodo
