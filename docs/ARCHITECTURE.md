@@ -50,7 +50,9 @@ Reglas puras en `domain/decision-rules.ts` (con tests propios):
 - **Anti-inanición**: un vehículo que espera más de `STARVATION_LIMIT_SECONDS` (25 s) se
   prioriza y puede cruzar aunque el jugador esté bloqueando su eje; así un jugador detenido no
   inaniza una dirección para siempre.
-- **Giros (izq/der)**: cada vehículo elige un movimiento (60% recto, 20% derecha, 20% izquierda).
+- **Giros (izq/der) — opcional (`setTurns`, por defecto off)**: fuera del alcance base, se
+  activa desde la UI como las colisiones. Cada vehículo elige un movimiento (60% recto, 20% derecha,
+  20% izquierda).
   Los giros siguen una **curva Bézier cuadrática** dentro de la intersección (`domain/turn-path.ts`)
   desde su carril de entrada al de salida (derecha → carril exterior, izquierda → interior) y, al
   terminar, adoptan la dirección de salida y siguen recto. Los conflictos se resuelven por

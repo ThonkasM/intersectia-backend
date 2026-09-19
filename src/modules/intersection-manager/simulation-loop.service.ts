@@ -130,6 +130,10 @@ export class SimulationLoopService implements OnModuleInit, OnModuleDestroy {
     this.ensureSession(sessionId).setCollisions(enabled);
   }
 
+  setTurns(sessionId: string, enabled: boolean): void {
+    this.ensureSession(sessionId).setTurns(enabled);
+  }
+
   get activeSessions(): number {
     return this.sessions.size;
   }

@@ -18,3 +18,8 @@ export class SetCollisionsDto {
   @IsBoolean()
   enabled: boolean;
 }
+
+export class SetTurnsDto {
+  @IsBoolean()
+  enabled: boolean;
+}

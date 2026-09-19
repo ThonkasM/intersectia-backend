@@ -50,6 +50,7 @@ Handshake: `auth: { sessionId }` (opcional). La sesión determina la sala.
 | `freezeVehicle` / `resumeVehicle` | `{ id }` | string ≤ 64 |
 | `reset` | — | — |
 | `setCollisions` | `{ enabled }` | booleano |
+| `setTurns` | `{ enabled }` | booleano (giros opcionales, por defecto off) |
 
 Payloads inválidos son rechazados por el `ValidationPipe` del gateway (no rompen la simulación).
 

@@ -88,6 +88,7 @@ export class SessionSimulation {
   private dbSessionId: string | null = null;
   private readonly playerLastSeen = new Map<string, number>();
   private collisionsEnabled = false;
+  private turnsEnabled = false;
   private readonly random: () => number;
 
   constructor(private readonly deps: SessionSimulationDeps) {
@@ -194,8 +195,10 @@ export class SessionSimulation {
     if (this.vehicles.length < MAX_VEHICLES) {
       const from = DIRECTIONS[Math.floor(this.random() * DIRECTIONS.length)];
       const roll = this.random();
-      const turn: Turn =
-        roll < 0.6 ? 'straight' : roll < 0.8 ? 'right' : 'left';
+      let turn: Turn = 'straight';
+      if (this.turnsEnabled) {
+        turn = roll < 0.6 ? 'straight' : roll < 0.8 ? 'right' : 'left';
+      }
       const lane = laneForTurn(turn, this.random() < 0.5 ? 0 : 1);
       const { dx, dz } = Vehicle.DIRECTION[from];
       const off = laneOffset(from, lane);
@@ -393,6 +396,13 @@ export class SessionSimulation {
     }
     this.deps.logger.log(
       `[${this.sessionId}] collisions ${enabled ? 'enabled' : 'disabled'}`,
+    );
+  }
+
+  setTurns(enabled: boolean): void {
+    this.turnsEnabled = enabled;
+    this.deps.logger.log(
+      `[${this.sessionId}] turns ${enabled ? 'enabled' : 'disabled'}`,
     );
   }
 

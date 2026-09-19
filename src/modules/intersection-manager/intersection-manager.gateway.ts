@@ -21,6 +21,7 @@ import {
   FreezeVehicleDto,
   SetCollisionsDto,
   SetModeDto,
+  SetTurnsDto,
 } from './dto/control.dto';
 import { DecisionEvent } from './decision/decision.interface';
 import { SimulationLoopService } from './simulation-loop.service';
@@ -145,6 +146,15 @@ export class IntersectionManagerGateway
     @MessageBody() body: SetCollisionsDto,
   ): void {
     this.simulationLoop.setCollisions(sessionIdOf(client), body.enabled);
+  }
+
+  @UsePipes(WS_PIPE)
+  @SubscribeMessage('setTurns')
+  handleSetTurns(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: SetTurnsDto,
+  ): void {
+    this.simulationLoop.setTurns(sessionIdOf(client), body.enabled);
   }
 }
 
