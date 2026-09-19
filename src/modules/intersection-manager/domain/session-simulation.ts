@@ -581,13 +581,13 @@ export class SessionSimulation {
     vehicle.state = 'crossing';
     vehicle.authorized = true;
     vehicle.speed = CROSSING_SPEED;
-    const lane = laneForTurn(vehicle.turn, vehicle.lane);
-    vehicle.lane = lane;
+    // El giro se toma en el carril propio (ya asignado por movimiento en el
+    // spawn y mantenido en los cambios de carril): no se fuerza ni se salta de carril.
     vehicle.exitFrom = exitDirection(vehicle.from, vehicle.turn);
     if (!vehicle.isPlayerControlled && vehicle.turn !== 'straight') {
       vehicle.path = buildTurnPath(
         vehicle.from,
-        lane,
+        vehicle.lane,
         vehicle.exitFrom,
         vehicle.x,
         vehicle.z,

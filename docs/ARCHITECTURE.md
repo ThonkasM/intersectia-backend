@@ -58,11 +58,12 @@ Reglas puras en `domain/decision-rules.ts` (con tests propios):
   Los giros siguen una **curva Bézier cuadrática** dentro de la intersección (`domain/turn-path.ts`)
   desde su carril de entrada al de salida (derecha → carril exterior, izquierda → interior) y, al
   terminar, adoptan la dirección de salida y siguen recto. Los conflictos se resuelven por
-  **movimiento** (`movementConflicts`): recto+recto y recto+derecha en ejes opuestos **no**
-  conflictúan (solo la izquierda cruza al de enfrente), lo que reduce esperas innecesarias. En
-  cambio, **dos giros al mismo lado desde el mismo sentido conflictúan** (convergen en el mismo
-  carril de salida) y se liberan espaciados; además, un giro queda restringido a su carril
-  (derecha → exterior, izquierda → interior) para que no se crucen trayectorias paralelas.
+  **movimiento** (`movementConflicts`): en el **mismo acceso**, dos **rectos** por carriles
+  paralelos son compatibles; cualquier movimiento con giro conflictúa (su curva cruza el carril
+  vecino o converge con otro giro). En ejes **opuestos**, recto+recto y recto+derecha no
+  conflictúan (solo la izquierda cruza al de enfrente). Perpendiculares siempre conflictúan.
+  El giro se toma **en el carril propio** (asignado por movimiento: derecha → exterior,
+  izquierda → interior, y mantenido en los cambios de carril); no se salta de carril al conceder.
 - **Balanceo de carriles**: al cambiar de carril se elige el carril con menos vehículos por delante.
 
 ## Métricas de nodo
