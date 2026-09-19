@@ -89,6 +89,7 @@ export class SessionSimulation {
   private readonly playerLastSeen = new Map<string, number>();
   private collisionsEnabled = false;
   private turnsEnabled = false;
+  private aiDecisionCache?: { signature: string; vehicleId: string | null };
   private readonly random: () => number;
 
   constructor(private readonly deps: SessionSimulationDeps) {
@@ -136,6 +137,7 @@ export class SessionSimulation {
   setMode(mode: SimMode): void {
     if (mode === this.mode) return;
     this.mode = mode;
+    this.aiDecisionCache = undefined;
     // Un vehiculo encolado que ya no esta en la cola volveria a quedar inmóvil:
     // lo devolvemos a "approach" para que se re-encola con el nuevo motor.
     for (const v of this.vehicles) {
@@ -501,9 +503,14 @@ export class SessionSimulation {
           : worst,
       null,
     );
-    const id = starving
-      ? starving.id
-      : await this.getEngine().decideNextCrossing(eligible, occupant);
+    let id: string | null;
+    if (starving) {
+      id = starving.id;
+    } else if (this.mode === 'managed-ai') {
+      id = await this.decideWithCache(eligible, occupant);
+    } else {
+      id = await this.getEngine().decideNextCrossing(eligible, occupant);
+    }
     const primary = id ? eligible.find((v) => v.id === id) : undefined;
     if (primary && this.canGrant(primary)) this.grantCrossing(primary);
 
@@ -516,6 +523,35 @@ export class SessionSimulation {
 
   // Un cruce solo se concede si el carril de salida esta libre y no se
   // conflictua con el ocupante ni con el jugador dentro de la interseccion.
+  // En managed-ai el motor es una llamada HTTP (150 ms de presupuesto). La
+  // decision solo puede cambiar cuando cambia la cola o el ocupante, asi que se
+  // reutiliza mientras la firma no cambie: baja de ~20 llamadas/s a ~1/s.
+  private async decideWithCache(
+    eligible: Vehicle[],
+    occupant: Vehicle | null,
+  ): Promise<string | null> {
+    const signature = this.queueSignature(eligible, occupant);
+    if (this.aiDecisionCache && this.aiDecisionCache.signature === signature) {
+      return this.aiDecisionCache.vehicleId;
+    }
+    const vehicleId = await this.deps.aiDecisionClient.decideNextCrossing(
+      eligible,
+      occupant,
+    );
+    this.aiDecisionCache = { signature, vehicleId };
+    return vehicleId;
+  }
+
+  private queueSignature(
+    eligible: Vehicle[],
+    occupant: Vehicle | null,
+  ): string {
+    const parts = eligible
+      .map((v) => `${v.id}:${v.from}:${Math.round(v.waitedSeconds)}`)
+      .join(',');
+    return `${occupant ? occupant.id : '-'}|${parts}`;
+  }
+
   private canGrant(vehicle: Vehicle): boolean {
     if (this.conflictsWithOccupants(vehicle)) return false;
     // Un vehiculo en riesgo de inanicion puede cruzar aunque el jugador bloquee
@@ -640,6 +676,7 @@ export class SessionSimulation {
     this.vehicles.length = 0;
     this.queue.length = 0;
     this.occupants = [];
+    this.aiDecisionCache = undefined;
     this.spawnCountdown = 1.5;
     this.nextId = 0;
     this.playerLastSeen.clear();

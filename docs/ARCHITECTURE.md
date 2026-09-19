@@ -27,6 +27,8 @@ Interfaz `DecisionEngine.decideNextCrossing(queue, occupant): Promise<string|nul
 
 Se seleccionan según `SimMode` (`traditional` → derecha, `managed-ai` → IA, `managed` → FIFO). El backend envía el `occupant` a la IA para que la política pueda considerar la ocupación.
 
+**Caché de decisión IA**: en `managed-ai` el motor es una llamada HTTP; la decisión solo puede cambiar cuando cambia la cola o el ocupante. `SessionSimulation` cachea el resultado por firma de la cola (ids + dirección + espera redondeada) y solo vuelve a consultar cuando cambia: baja de ~20 llamadas/s (una por tick) a ~1/s.
+
 ## WebSocket
 
 socket.io con **salas por sesión**. Eventos servidor→cliente: `state` (20 Hz) y `decision`. Cliente→servidor: `setMode`, `playerState`, `freezeVehicle`, `resumeVehicle`, `reset`, `setCollisions`. Todos los payloads se validan con `ValidationPipe` y DTOs con `class-validator`.
