@@ -43,6 +43,23 @@ describe('decision-rules', () => {
     expect(movementConflicts('N', 'straight', 'S', 'left')).toBe(true);
   });
 
+  it('a left turn always conflicts with the oncoming traffic (all directions)', () => {
+    const opposite: Record<string, 'N' | 'S' | 'E' | 'W'> = {
+      N: 'S',
+      S: 'N',
+      E: 'W',
+      W: 'E',
+    };
+    for (const from of ['N', 'S', 'E', 'W'] as const) {
+      const opp = opposite[from];
+      // izquierda contra el recto/giros del sentido opuesto: siempre conflicto
+      expect(movementConflicts(from, 'left', opp, 'straight')).toBe(true);
+      expect(movementConflicts(from, 'straight', opp, 'left')).toBe(true);
+      expect(movementConflicts(from, 'left', opp, 'left')).toBe(true);
+      expect(movementConflicts(from, 'left', opp, 'right')).toBe(true);
+    }
+  });
+
   it('conflicts between perpendicular movements', () => {
     expect(movementConflicts('N', 'right', 'E', 'straight')).toBe(true);
   });
