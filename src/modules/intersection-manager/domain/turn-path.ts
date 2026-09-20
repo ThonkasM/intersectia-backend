@@ -4,8 +4,9 @@ export const TURN_EXIT: Record<
   Direction,
   { straight: Direction; right: Direction; left: Direction }
 > = {
-  N: { straight: 'N', right: 'W', left: 'E' },
-  S: { straight: 'S', right: 'E', left: 'W' },
+  // 'right' es la derecha real del conductor (nariz +z, arriba +y -> derecha -x).
+  N: { straight: 'N', right: 'E', left: 'W' },
+  S: { straight: 'S', right: 'W', left: 'E' },
   E: { straight: 'E', right: 'S', left: 'N' },
   W: { straight: 'W', right: 'N', left: 'S' },
 };
