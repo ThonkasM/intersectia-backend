@@ -444,6 +444,8 @@ export class SessionSimulation {
       v.from = v.exitFrom;
       v.path = null;
       v.pathT = 0;
+      // Giro completado: deja de señalizar (apaga flecha y guiñador).
+      v.turn = 'straight';
     }
   }
 
