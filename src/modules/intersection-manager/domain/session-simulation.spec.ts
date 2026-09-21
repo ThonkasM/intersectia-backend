@@ -3,6 +3,7 @@ import { SessionSimulation } from './session-simulation';
 import { Vehicle } from './vehicle.model';
 import { DeterministicDecisionService } from '../decision/deterministic-decision.service';
 import { RightPriorityDecisionService } from '../decision/right-priority-decision.service';
+import type { RemoteVehicleDto } from '../dto/remote-vehicle.dto';
 
 describe('SessionSimulation AI decision cache', () => {
   function makeSimulation(decide: jest.Mock): SessionSimulation {
@@ -64,5 +65,48 @@ describe('SessionSimulation AI decision cache', () => {
     expect(vehicle.from).toBe('W');
     expect(vehicle.path).toBeNull();
     expect(vehicle.turn).toBe('straight');
+  });
+});
+
+describe('SessionSimulation ambulance spawning', () => {
+  function makeSimulation(random: () => number): {
+    simulation: SessionSimulation;
+    last: () => RemoteVehicleDto[];
+  } {
+    let snapshot: RemoteVehicleDto[] = [];
+    const metrics = {
+      startSession: jest.fn().mockResolvedValue('db'),
+      endSession: jest.fn().mockResolvedValue(undefined),
+    };
+    const simulation = new SessionSimulation({
+      sessionId: 'ambulance',
+      metrics: metrics as never,
+      deterministicDecision: new DeterministicDecisionService(),
+      rightPriorityDecision: new RightPriorityDecisionService(),
+      aiDecisionClient: { decideNextCrossing: jest.fn() } as never,
+      emitState: (vehicles) => {
+        snapshot = vehicles;
+      },
+      emitDecision: () => undefined,
+      logger: new Logger('ambulance'),
+      random,
+    });
+    return { simulation, last: () => snapshot };
+  }
+
+  it('spawns an ambulance when the roll is below the ambulance chance', async () => {
+    const { simulation, last } = makeSimulation(() => 0.01);
+    for (let i = 0; i < 31; i += 1) await simulation.tick();
+
+    expect(last().length).toBeGreaterThan(0);
+    expect(last().some((v) => v.kind === 'ambulance')).toBe(true);
+  });
+
+  it('spawns only cars when the roll is above the ambulance chance', async () => {
+    const { simulation, last } = makeSimulation(() => 0.99);
+    for (let i = 0; i < 31; i += 1) await simulation.tick();
+
+    expect(last().length).toBeGreaterThan(0);
+    expect(last().every((v) => v.kind === 'car')).toBe(true);
   });
 });

@@ -5,6 +5,7 @@ import {
   laneOffset,
   Vehicle,
   type Turn,
+  type VehicleKind,
 } from './vehicle.model';
 import {
   APPROACH_SPEED,
@@ -57,6 +58,7 @@ import { PlayerStateDto } from '../dto/player-state.dto';
 const TICK_DT = 0.05;
 const MAX_VEHICLES = 14;
 const MAX_PLAYERS = 4;
+const AMBULANCE_CHANCE = 0.08;
 const LANE_CHANGE_COOLDOWN = 1.5;
 const OVERTAKE_CLEARANCE = 7;
 const LANE_BALANCE_LOOKAHEAD = 40;
@@ -202,6 +204,8 @@ export class SessionSimulation {
         turn = roll < 0.6 ? 'straight' : roll < 0.8 ? 'right' : 'left';
       }
       const lane = laneForTurn(turn, this.random() < 0.5 ? 0 : 1);
+      const kind: VehicleKind =
+        this.random() < AMBULANCE_CHANCE ? 'ambulance' : 'car';
       const { dx, dz } = Vehicle.DIRECTION[from];
       const off = laneOffset(from, lane);
       const vehicle = new Vehicle(
@@ -210,6 +214,7 @@ export class SessionSimulation {
         off.x - dx * SPAWN_DISTANCE,
         off.z - dz * SPAWN_DISTANCE,
         lane,
+        kind,
       );
       vehicle.turn = turn;
       vehicle.exitFrom = exitDirection(from, turn);
@@ -664,6 +669,7 @@ export class SessionSimulation {
       frozen: v.frozen,
       crashed: v.crashed,
       turn: v.turn,
+      kind: v.kind,
     }));
   }
 
