@@ -13,7 +13,8 @@ RUN npm run build
 
 FROM node:22-slim AS runtime
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    PRISMA_SKIP_POSTINSTALL_GENERATE=1
 
 WORKDIR /app
 

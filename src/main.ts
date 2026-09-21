@@ -13,6 +13,9 @@ function resolveCorsOrigin(raw: string | undefined): true | string[] {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // Permite que onModuleDestroy (cerrar sesiones, limpiar el loop, prisma.$disconnect)
+  // se ejecute al recibir SIGTERM/SIGINT (docker stop, redeploy, apagado de la instancia).
+  app.enableShutdownHooks();
   const configService = app.get(ConfigService);
   app.enableCors({ origin: resolveCorsOrigin(configService.get('CORS_ORIGIN')) });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
